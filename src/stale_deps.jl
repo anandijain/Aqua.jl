@@ -29,7 +29,7 @@ analyze_stale_deps(packages; kwargs...) = analyze_stale_deps(packages, kwargs)
 analyze_stale_deps(packages, kwargs) =
     [_analyze_stale_deps_1(pkg; kwargs...) for pkg in aspkgids(packages)]
 
-function _analyze_stale_deps_1(pkg::PkgId; ignore::AbstractArray{Symbol} = Symbol[])
+function _analyze_stale_deps_1(pkg::PkgId; ignore::AbstractArray{Symbol}=Symbol[])
     label = "$pkg"
 
     result = root_project_or_failed_lazytest(pkg)
@@ -57,11 +57,24 @@ function _analyze_stale_deps_1(pkg::PkgId; ignore::AbstractArray{Symbol} = Symbo
     loaded_uuids = map(UUID, eachline(IOBuffer(output)))
 
     return _analyze_stale_deps_2(;
-        pkg = pkg,
-        deps = deps,
-        loaded_uuids = loaded_uuids,
-        ignore = ignore,
+        pkg=pkg,
+        deps=deps,
+        loaded_uuids=loaded_uuids,
+        ignore=ignore
     )
+end
+
+function get_stale_pkgs(;
+    deps::AbstractArray{PkgId},
+    loaded_uuids::AbstractArray{UUID},
+    ignore::AbstractArray{Symbol}
+)
+    deps_uuids = [p.uuid for p in deps]
+    pkgid_from_uuid = Dict(p.uuid => p for p in deps)
+
+    stale_uuids = setdiff(deps_uuids, loaded_uuids)
+    stale_pkgs = [pkgid_from_uuid[uuid] for uuid in stale_uuids]
+    [p for p in stale_pkgs if !(Symbol(p.name) in ignore)]
 end
 
 # Side-effect -free part of stale dependency analysis.
@@ -69,15 +82,15 @@ function _analyze_stale_deps_2(;
     pkg::PkgId,
     deps::AbstractArray{PkgId},
     loaded_uuids::AbstractArray{UUID},
-    ignore::AbstractArray{Symbol},
+    ignore::AbstractArray{Symbol}
 )
     label = "$pkg"
-    deps_uuids = [p.uuid for p in deps]
-    pkgid_from_uuid = Dict(p.uuid => p for p in deps)
 
-    stale_uuids = setdiff(deps_uuids, loaded_uuids)
-    stale_pkgs = [pkgid_from_uuid[uuid] for uuid in stale_uuids]
-    stale_pkgs = [p for p in stale_pkgs if !(Symbol(p.name) in ignore)]
+    stale_pkgs = get_stale_pkgs(
+        deps=deps,
+        loaded_uuids=loaded_uuids,
+        ignore=ignore
+    )
 
     if isempty(stale_pkgs)
         return LazyTestResult(
