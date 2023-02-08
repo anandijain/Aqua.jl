@@ -64,6 +64,44 @@ function _analyze_stale_deps_1(pkg::PkgId; ignore::AbstractArray{Symbol}=Symbol[
     )
 end
 
+get_stale_deps(packages; kwargs...) = get_stale_deps(packages, kwargs)
+get_stale_deps(packages, kwargs) =
+    [_get_stale_deps_1(pkg; kwargs...) for pkg in aspkgids(packages)]
+
+function _get_stale_deps_1(pkg::PkgId; ignore::AbstractArray{Symbol}=Symbol[])
+    label = "$pkg"
+
+    result = root_project_or_failed_lazytest(pkg)
+    result isa LazyTestResult && return result
+    root_project_path = result
+
+    @debug "Parsing `$root_project_path`"
+    prj = TOML.parsefile(root_project_path)
+    raw_deps = get(prj, "deps", nothing)
+    if raw_deps === nothing
+        return LazyTestResult(label, "No `deps` table in `$root_project_path`", true)
+    end
+    deps = [PkgId(UUID(v), k) for (k, v) in raw_deps]
+
+    code = """
+    $(Base.load_path_setup_code())
+    Base.require($(reprpkgid(pkg)))
+    for pkg in keys(Base.loaded_modules)
+        pkg.uuid === nothing || println(pkg.uuid)
+    end
+    """
+    cmd = Base.julia_cmd()
+    output = read(`$cmd --startup-file=no --color=no -e $code`, String)
+    @debug("Checked modules loaded in a separate process.", cmd, Text(code), Text(output))
+    loaded_uuids = map(UUID, eachline(IOBuffer(output)))
+
+    return get_stale_pkgs(;
+        deps=deps,
+        loaded_uuids=loaded_uuids,
+        ignore=ignore
+    )
+end
+
 function get_stale_pkgs(;
     deps::AbstractArray{PkgId},
     loaded_uuids::AbstractArray{UUID},
